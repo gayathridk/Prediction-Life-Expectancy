@@ -1,0 +1,179 @@
+---
+title: "Prediction of Life Expectancy by Continent"
+author: "Gayathri Dorndula and Anuja Nanal"
+date: "3/10/2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(tidyr)
+library(VIM)
+library(Hmisc)
+library(data.table)
+library(mltools)
+library(dplyr)
+library(caret)
+library(broom)
+library(forecast)
+library(countrycode)
+library("scales")
+
+
+life <- read.csv("Life Expectancy Data.csv",sep=",",stringsAsFactors = FALSE)
+nrow(life)
+summary(life)
+head(life)
+
+# Data Cleaning and Imputation of Missing Values
+
+#Drop NA's in life expectancy column
+life<-life %>% drop_na(Life.expectancy)
+
+#Count of  Missing Values
+count_alcohol<-sum(is.na(life$Alcohol))
+count_income<-sum(is.na(life$Income.composition.of.resources))
+count_gdp<-sum(is.na(life$GDP))
+count_population<-sum(is.na(life$Population))
+count_expenditure<-sum(is.na(life$Total.expenditure))
+count_diptheria<-sum(is.na(life$Diphtheria))
+count_polio<-sum(is.na(life$Polio))
+count_hepatitis<-sum(is.na(life$Hepatitis.B))
+count_thinness_1.19<-sum(is.na(life$thinness..1.19.years))
+count_thinness_5.9<-sum(is.na(life$thinness.5.9.years))
+count_schooling<-sum(is.na(life$Schooling))
+variable <- c('Alcohol','Income.composition.of.resources','GDP','Population','Total.expenditure','Diphtheria','Polio','Hepatitis.B','thinness..1.19.years','thinness.5.9.years','Schooling')
+count_of_missing <-c(count_alcohol,count_income,count_gdp,count_population,count_expenditure,count_diptheria,count_polio,count_hepatitis,count_thinness_1.19,count_thinness_5.9,count_schooling)
+missing_aggregate <- data.frame(variable,count_of_missing)
+missing_aggregate[order(-missing_aggregate$count_of_missing),]
+
+#Visualization of Missing Values
+
+sum(is.na(life$Alcohol))
+library(VIM)
+aggr(x = life,mar=c(10,5,5,3))
+
+
+#Impute missing values in Alcohol, Income composition of resources,GDP,Population, Total expenditure using K-Nearest Neighbors.The data is already sorted by Countries and Years
+life_impute<-life %>% group_by(Country,Year) %>% kNN(life,variable=c("Alcohol","Income.composition.of.resources","GDP","Population","Total.expenditure"),k=2)
+
+#Missing values in Diptheria,Polio,Hepatitis,thinness 5-9 years and thinness  1-19 years are imputed with 0
+life_impute$Diphtheria[is.na(life_impute$Diphtheria)] <- 0
+life_impute$Polio[is.na(life_impute$Polio)] <- 0
+life_impute$Hepatitis.B[is.na(life_impute$Hepatitis.B)] <- 0
+life_impute$thinness..1.19.years[is.na(life_impute$thinness..1.19.years)] <- 0
+life_impute$thinness.5.9.years[is.na(life_impute$thinness.5.9.years)] <- 0
+life_impute$Schooling[is.na(life_impute$Schooling)] <- 0
+
+#BMI is greater than 50 and less than 10 in more number of records, so the variable is dropped
+print(length(life_impute$BMI[life_impute$BMI >= 50 | life$BMI <=10 ]))
+life_impute<-select(life_impute,-c(BMI))
+
+life<-select(life_impute,-c(Alcohol_imp,Income.composition.of.resources_imp,GDP_imp,Population_imp, Total.expenditure_imp))
+life$Status<-as.factor(life$Status)
+
+#Bin countries to continents
+life$continent <- countrycode(sourcevar = life[, "Country"],
+                            origin = "country.name",
+                            destination = "continent")
+
+
+```
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+
+#Variables Country and Status are dropped since they are categorical in nature and can't be included in the correlation matrix. Life expectancy is dropped since it is the target variable. Year is dropped since it cannot be used as a predictor.
+life_subset <- life[c(-1,-2,-3,-4,-22)]
+life_expectancy <- as.data.frame(life_subset)
+# Correlation Matrix to check for Multi-collinearity
+correlation<-rcorr(as.matrix(life_expectancy))
+print(correlation)
+
+#From the correlation matrix output, under five deaths is dropped since it is highly correlated with infant deaths.
+#Thinness 5-9 years is dropped since it is highly correlated with Thinness 1-19 years.
+#Percentage expenditure is dropped since it is highly correlated with GDP.
+#Country is dropped since it has been binned to continents
+life_data <- life[c(-1,-2,-11,-19,-8)]
+
+#Create Dummy variables for categorical variables continent,Status and merge the variables with the original dataset.
+continent <- one_hot(as.data.table(as.factor(life_data$continent)))
+print(continent)
+status <- one_hot(as.data.table(life_data$Status))
+print(status)
+status_developed = subset(status, select = c(V1_Developed))
+continent <- subset(continent, select = -c(V1_Oceania))
+life <- cbind(life_data,continent,status_developed)
+
+
+#Drop continent and Status variable since dummy variables are included in the dataset for Country and Status
+life <- subset(life, select = -c(continent,Status))
+
+
+#Rescale the numeric variables
+life$Adult.Mortality<-rescale(life$Adult.Mortality)
+life$infant.deaths<-rescale(life$infant.deaths)
+life$Alcohol <-rescale(life$Alcohol)
+life$Hepatitis.B <-rescale(life$Hepatitis.B)
+life$Measles <-rescale(life$Measles)
+life$Polio <-rescale(life$Polio)
+life$Total.expenditure <-rescale(life$Total.expenditure)
+life$Diphtheria <-rescale(life$Diphtheria)
+life$HIV.AIDS <-rescale(life$HIV.AIDS)
+life$GDP <-rescale(life$GDP)
+life$Population <-rescale(life$Population)
+life$thinness..1.19.years <-rescale(life$thinness..1.19.years)
+life$Income.composition.of.resources <-rescale(life$Income.composition.of.resources)
+life$Schooling <-rescale(life$Schooling)
+
+
+
+
+```
+
+
+```{r}
+
+# Prediction of Life Expectancy by Continent
+#Split the data in Train and Test.
+set.seed(6000)
+Index <- createDataPartition(life$Life.expectancy,p=.7,list=FALSE,times=1)
+x_train <- life[Index,]
+x_test <- life[-Index,]
+
+library(randomForest)
+## random forest
+life_rf <- randomForest(Life.expectancy ~ ., data = x_train, ntree = 500,
+                   mtry = 4, nodesize = 5, importance = TRUE)
+
+## variable importance plot
+varImpPlot(life_rf, type = 1)
+## confusion matrix
+rf.pred <- predict(life_rf,x_test)
+accuracy(rf.pred,x_test$Life.expectancy)
+#Interpretation:
+#The Random Forest model developed has a RMSE value of 2.03. Since the RMSE value is low,the model performs well on the validation dataset.
+#It is observed that the values of all the error metrics (Mean Error,Mean Absolute Error,Mean Percentage Error, Mean Absolute Percentage Error) are comparatively low as well.
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
