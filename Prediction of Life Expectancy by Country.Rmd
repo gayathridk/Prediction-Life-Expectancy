@@ -1,0 +1,365 @@
+---
+title: "Prediction of Life Expectancy by Country"
+author: "Gayathri Dorndula and Anuja Nanal"
+date: "3/10/2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(tidyr)
+library(VIM)
+library(Hmisc)
+library(data.table)
+library(mltools)
+library(dplyr)
+library(caret)
+library(broom)
+library(forecast)
+library(countrycode)
+library("scales")
+library(ggplot2)
+library(ggthemes)
+library(magrittr)
+
+
+life <- read.csv("Life Expectancy Data.csv",sep=",",stringsAsFactors = FALSE)
+nrow(life)
+summary(life)
+head(life)
+
+# Data Cleaning and Imputation of Missing Values
+
+#Drop NA's in life expectancy column
+life<-life %>% drop_na(Life.expectancy)
+
+#Count of  Missing Values
+count_alcohol<-sum(is.na(life$Alcohol))
+count_income<-sum(is.na(life$Income.composition.of.resources))
+count_gdp<-sum(is.na(life$GDP))
+count_population<-sum(is.na(life$Population))
+count_expenditure<-sum(is.na(life$Total.expenditure))
+count_diptheria<-sum(is.na(life$Diphtheria))
+count_polio<-sum(is.na(life$Polio))
+count_hepatitis<-sum(is.na(life$Hepatitis.B))
+count_thinness_1.19<-sum(is.na(life$thinness..1.19.years))
+count_thinness_5.9<-sum(is.na(life$thinness.5.9.years))
+count_schooling<-sum(is.na(life$Schooling))
+variable <- c('Alcohol','Income.composition.of.resources','GDP','Population','Total.expenditure','Diphtheria','Polio','Hepatitis.B','thinness..1.19.years','thinness.5.9.years','Schooling')
+count_of_missing <-c(count_alcohol,count_income,count_gdp,count_population,count_expenditure,count_diptheria,count_polio,count_hepatitis,count_thinness_1.19,count_thinness_5.9,count_schooling)
+missing_aggregate <- data.frame(variable,count_of_missing)
+missing_aggregate[order(-missing_aggregate$count_of_missing),]
+
+#Visualization of Missing Values
+
+sum(is.na(life$Alcohol))
+library(VIM)
+aggr(x = life,mar=c(10,5,5,3))
+
+
+#Impute missing values in Alcohol, Income composition of resources,GDP,Population, Total expenditure using K-Nearest Neighbors.The data is already sorted by Countries and Years
+life_impute<-life %>% group_by(Country,Year) %>% kNN(life,variable=c("Alcohol","Income.composition.of.resources","GDP","Population","Total.expenditure"),k=2)
+
+#Missing values in Diptheria,Polio,Hepatitis,thinness 5-9 years and thinness  1-19 years are imputed with 0
+life_impute$Diphtheria[is.na(life_impute$Diphtheria)] <- 0
+life_impute$Polio[is.na(life_impute$Polio)] <- 0
+life_impute$Hepatitis.B[is.na(life_impute$Hepatitis.B)] <- 0
+life_impute$thinness..1.19.years[is.na(life_impute$thinness..1.19.years)] <- 0
+life_impute$thinness.5.9.years[is.na(life_impute$thinness.5.9.years)] <- 0
+life_impute$Schooling[is.na(life_impute$Schooling)] <- 0
+
+#BMI is greater than 50 and less than 10 in more number of records, so the variable is dropped
+print(length(life_impute$BMI[life_impute$BMI >= 50 | life$BMI <=10 ]))
+life_impute<-select(life_impute,-c(BMI))
+
+life<-select(life_impute,-c(Alcohol_imp,Income.composition.of.resources_imp,GDP_imp,Population_imp, Total.expenditure_imp))
+life$Status<-as.factor(life$Status)
+life$Country <- as.factor(life$Country)
+
+#Bin countries to continents
+life$continent <- countrycode(sourcevar = life[, "Country"],
+                            origin = "country.name",
+                            destination = "continent")
+
+```
+
+```{r}
+
+# Data Exploration
+
+# Average Life Expectancy by type of Country
+avg_life_expectancy<-life %>% group_by(Status)%>% summarise(avg_lifeExpectancy=mean(Life.expectancy,2)) 
+
+avg_life<- ggplot(data=avg_life_expectancy, aes(x=Status, y=avg_lifeExpectancy)) + geom_bar(stat="identity", fill="#FF6666")+ geom_text(aes(label=avg_lifeExpectancy), vjust=-0.3, size=3.5)+xlab("Status")+ ylab("Average Life Expectancy") + 
+  ggtitle("Average Life Expectancy across Developed and Developing Countries")+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+
+print(avg_life)
+
+# The average Life Expectancy in developed countries is 79.25 years which more than the developing countries which has 69 years.
+
+# Trend of Average Life Expectancy over the Years
+avg_life_expectancy_year<-life %>% group_by(Year)%>% summarise(avg_lifeExpectancy=mean(Life.expectancy,na.rm = TRUE)) 
+trend_life<- ggplot(data=avg_life_expectancy_year, aes(x=Year, y=avg_lifeExpectancy)) + geom_line(color="red") +
+  geom_point(color = "steel blue",size=2) + xlab("Years")+ ylab(" Average Life Expectancy") + ggtitle("Average Life Expectancy over Years")+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+
+print(trend_life)
+
+#The average Life Expectancy is getting better over years and is highest in year 2015
+
+# Variation of Life Expectancy with Total Expenditure spent on Healthcare
+
+expenditure<-subset(life, select = c("Life.expectancy","Total.expenditure"))
+life_expenditure <- ggplot(expenditure, aes(x =Life.expectancy , y = Total.expenditure)) +geom_point(color = "springgreen3",alpha=0.5,size=1.6) +
+  xlab("Life Expectancy") + ylab("Total Expenditure on HealthCare") + 
+  ggtitle("Variation of Life Expectancy with Total Expenditure")+ theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+  
+print(life_expenditure)
+
+# We can interpret from the graph that the Life Expectancy increases with the increase in the expenditure on healthcare.   
+
+#Life Expectancy Vs Alcohol consumption per capita 
+alcohol_plot<-subset(life, select = c("Life.expectancy","Alcohol","Status"))
+life_alcohol<- ggplot(alcohol_plot, aes(x =Life.expectancy , y = Alcohol,color=Status)) + geom_point(alpha=0.5,size=1.6) + 
+  xlab("Life Expectancy") + ylab("Consumption of Alcohol") +
+  ggtitle("Variation of Life Expectancy with Alcohol consumption")+ 
+  theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+print(life_alcohol)
+
+# The Developing Countries which have per capita consumption of alcohol less tend to have a better Life expectancy.
+
+#Variation of  Life Expectancy with HIV.AIDS
+HIV_plot<-subset(life, select = c("Life.expectancy","HIV.AIDS","Status"))
+life_HIV<- ggplot(HIV_plot, aes(x =Life.expectancy , y = HIV.AIDS,color=Status)) + geom_point(alpha=0.5,size=1.6) + 
+  xlab("Life Expectancy") + ylab("Deaths due to HIV") + ggtitle("Variation of Life Expectancy with HIV AIDS")+ 
+  theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+print(life_HIV)
+
+#We can clearly infer from the plot that developed countries have lesser number of deaths due to HIV and tend to have higher Life Expectancy.
+
+#Variation of Life Expectancy with GDP
+GDP_plot<-subset(life, select = c("Life.expectancy","GDP","Status"))
+life_GDP<- ggplot(GDP_plot, aes(x =Life.expectancy , y = GDP,color=Status)) + geom_point(alpha=0.5,size=1.6) + 
+  xlab("Life Expectancy") +  ylab("GDP") + ggtitle("Variation of Life Expectancy with GDP") +
+  theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+print(life_GDP)
+
+# For developed countries, as GDP increases the Life Expectancy also increases.
+
+# Variation Life Expectancy with Continent
+life_continent<-life %>% select("continent","Life.expectancy") %>% group_by(continent)%>% 
+  summarise(avg_life_exp=mean(Life.expectancy,2)) %>% 
+  arrange(desc(avg_life_exp))
+life_continent<-life_continent[1:5,]
+life_continent<-ggplot(data=life_continent, aes(x=reorder(continent,avg_life_exp), y= avg_life_exp )) + 
+  geom_bar(stat="identity", fill="plum2") + 
+  geom_text(aes(label= avg_life_exp), vjust=-0.01,hjust=1 ,size=3.5) + xlab("Continent")+ ylab("Average Life Expectancy")+
+  ggtitle("Average Life Expectancy across Continents")+ coord_flip()+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+
+print(life_continent)
+
+#Europe has the highest Average Life Expectancy with 77.8 Years.
+
+
+# Top 10 Countries with highest average Life Expectancy
+top_10<-life %>% select("Country","Life.expectancy") %>% 
+  group_by(Country)%>% 
+  summarise(avg_life_exp=mean(Life.expectancy,2)) %>% 
+  arrange(desc(avg_life_exp))
+
+top_10<-top_10[1:10,]
+
+top_10<-ggplot(data=top_10, aes(x=reorder(Country,avg_life_exp), y= avg_life_exp )) + 
+  geom_bar(stat="identity", fill="turquoise2") + 
+  coord_flip()+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))+
+  geom_text(aes(label= avg_life_exp), vjust=-0.1,hjust=1.15, size=3.5)+ 
+  xlab("Country")+ ylab("Average Life Expectancy") + 
+  ggtitle("Top 10 countries with highest Average Life Expectancy")+ coord_flip()
+print(top_10)
+
+#Japan has the highest Average Life Expectancy with 82.55 years.
+
+#Distribution of Life Expectancy
+
+life_box<-ggplot(life, aes(y=Life.expectancy)) + 
+  geom_boxplot(outlier.colour="red",outlier.size=1,outlier.alpha = 0.5,color="blue",fill="skyblue",alpha=0.25,width=2)+
+  theme_minimal()+
+  xlab("Life Expectancy")+
+  ggtitle("Distribution of Life Expectancy")+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+
+print(life_box)
+
+
+life_hist<-ggplot(life, aes(x=Life.expectancy)) + 
+  geom_histogram(color="black", fill="skyblue",bins = 15,alpha= 0.5)+
+  theme_minimal()+
+  xlab("Life Expectancy")+
+  ggtitle("Distribution of Life Expectancy")+theme(plot.title = element_text(hjust=0.5,size=14,face="bold"),legend.title=element_text(size=10,face = "bold"),axis.title.x = element_text(color = "black", size = 10, face = "bold"),axis.title.y = element_text(color = "black", size = 10, face = "bold"))
+
+print(life_hist)
+
+
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r}
+
+#Variables Country,Continent Status are dropped since they are categorical in nature and can't be included in the correlation matrix. Life expectancy is dropped since it is the target variable. Year is dropped since it cannot be used as a predictor.
+life_subset <- life[c(-1,-2,-3,-4,-22)]
+life_expectancy <- as.data.frame(life_subset)
+# Correlation Matrix to check for Multi-collinearity
+correlation<-rcorr(as.matrix(life_expectancy))
+print(correlation)
+
+#From the correlation matrix output, under five deaths is dropped since it is highly correlated with infant deaths.
+#Thinness 5-9 years is dropped since it is highly correlated with Thinness 1-19 years.
+#Percentage expenditure is dropped since it is highly correlated with GDP.
+life_data <- life[c(-2,-11,-19,-8,-22)]
+
+
+#Create Dummy variables for categorical variables continent,Status and merge the variables with the original dataset.
+country <- one_hot(as.data.table(life_data$Country))
+names(country) <- gsub(" ", "_", names(country))
+status <- one_hot(as.data.table(life_data$Status))
+status_developed = subset(status, select = c(V1_Developed))
+country <- subset(country, select = -c(`V1_Bolivia_(Plurinational_State_of)`))
+life <- cbind(life_data,country,status_developed)
+
+
+#Drop continent and Status variable since dummy variables are included in the dataset for Country and Status
+life <- subset(life, select = -c(Country,Status))
+
+
+#Rescale the numeric variables
+life$Adult.Mortality<-rescale(life$Adult.Mortality)
+life$infant.deaths<-rescale(life$infant.deaths)
+life$Alcohol <-rescale(life$Alcohol)
+life$Hepatitis.B <-rescale(life$Hepatitis.B)
+life$Measles <-rescale(life$Measles)
+life$Polio <-rescale(life$Polio)
+life$Total.expenditure <-rescale(life$Total.expenditure)
+life$Diphtheria <-rescale(life$Diphtheria)
+life$HIV.AIDS <-rescale(life$HIV.AIDS)
+life$GDP <-rescale(life$GDP)
+life$Population <-rescale(life$Population)
+life$thinness..1.19.years <-rescale(life$thinness..1.19.years)
+life$Income.composition.of.resources <-rescale(life$Income.composition.of.resources)
+life$Schooling <-rescale(life$Schooling)
+
+
+
+
+```
+
+
+```{r}
+
+
+#Split the data in Train and Test.
+set.seed(6000)
+Index <- createDataPartition(life$Life.expectancy,p=.7,list=FALSE,times=1)
+x_train <- life[Index,]
+x_test <- life[-Index,]
+
+
+#Mutiple Linear Regression Model for Life Expectancy as the response variable.
+life.lm <- lm(Life.expectancy ~ ., data = x_train)
+#summary(life.lm)
+
+
+life.lm.step <- step(life.lm, direction = "backward")
+summary(life.lm.step) 
+# From the Stepwise Regression Model output with Backward Elimination,the most significant predictors of Life Expectancy can be determined. 
+# The model developed has adjusted R-squared value of 0.956 . It indicates that 95.6 percentage of the response variable(Life Expectancy) variation is explained by the linear model which is considered to be a good model.
+```
+```{r}
+# Evaluation of model on Test Dataset
+
+Predicted_Life_Expectancy <- predict(life.lm.step, x_test)
+life_expectancy_prediction <- cbind(x_test[1],Predicted_Life_Expectancy)
+life_expectancy_prediction$Residuals<-life_expectancy_prediction$Life.expectancy-life_expectancy_prediction$Predicted_Life_Expectancy
+accuracy(life_expectancy_prediction$Predicted_Life_Expectancy,life_expectancy_prediction$Life.expectancy)
+# Interpretation:
+# RMSE measures the average error performed by the model in predicting the outcome for an observation.The Multiple Linear Regression model developed has a RMSE value of 2.26. Since the RMSE value is low,the model performs well on the validation dataset.
+#It is observed that the values of all the error metrics (Mean Error,Mean Absolute Error,Mean Percentage Error, Mean Absolute Percentage Error) are comparatively low as well.
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+
+library(rpart)
+library(rpart.plot)
+
+# Prediction of Life Expectancy by country using CART
+life_tree <- rpart(Life.expectancy ~ ., data = x_train,minbucket=1)
+prp(life_tree, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10)
+summary(life_tree)
+
+pred.test <- predict(life_tree,x_test)
+accuracy(pred.test,x_test$Life.expectancy)
+
+#Interpretation:
+#The CART model developed has a RMSE value of 3.78. Since the RMSE value is low,the model performs well on the validation dataset.
+#It is observed that the values of all the error metrics (Mean Error,Mean Absolute Error,Mean Percentage Error, Mean Absolute Percentage Error) are comparatively low as well.
+
+```
+```{r}
+
+#Prediction of Life Expectancy using KNN 
+library(caret)
+
+# initialize a data frame with two columns: k, and Error. 
+accuracy.df <- data.frame(k = seq(1, 10, 1), RMSE_Error = rep(0, 10)) 
+ 
+# compute knn for different k on testing data to find the best value of k. 
+for(i in 1:10) {   
+  knn.pred <- class::knn(x_train[, 5:21], x_test[,5:21],cl = x_train[, 4], k = i)  
+  
+   acc<- as.data.frame( accuracy(as.numeric(as.character(knn.pred)),x_test[,4]))
+  accuracy.df[i, 2] <- acc[2]
+}
+ 
+print(accuracy.df)
+# k is chosen as 1 since the RMSE is the least
+
+# calculating the accuracy of the model using the best k
+
+knn.pred_op <- class::knn(x_train[, 5:21], x_test[,5:21],cl = x_train[, 4], k = 1)  
+
+knn.pred_op
+summary(knn.pred_op)
+
+output<-data.frame(knn.pred_op)
+output<-cbind(output,x_test$Life.expectancy)
+View(output)
+colnames(output)[1]<-"Pred"
+colnames(output)[2]<-"Actual"
+
+View(output)
+
+
+model_eval<- as.data.frame( accuracy(as.numeric(as.character(knn.pred_op)),x_test[,4]))
+ 
+print(model_eval)
+
+# Interpretation: The root-mean-square error (RMSE) is a frequently used measure of the differences between values  predicted by a model or an estimator and the values observed. The model built has RMSE of 0.1906 and rest error values(Mean Error,Mean Absolute Error,Mean Percentage Error, Mean Absolute Percentage Error) are also low.
+```
+
+
+
