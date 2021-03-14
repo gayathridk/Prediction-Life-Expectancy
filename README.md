@@ -1,4 +1,4 @@
-# Prediction-Life-Expectancy
+# Prediction of Life Expectancy
 
 •	The objective of the project is to predict the Life Expectancy by country across all the countries in the world using Multiple Linear Regression. 
 
